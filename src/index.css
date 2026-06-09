@@ -1,6 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap');
 @import "tailwindcss";
 
+/* ===== 强制 TailwindCSS v4 使用 sRGB 色彩空间（兼容360浏览器等旧浏览器） ===== */
+/* TailwindCSS v4 默认使用 oklch，但 oklch 在旧版浏览器中不被支持 */
+@theme {
+  --color-primary: #1e1b4b;
+  --color-primary-light: #3730a3;
+  --color-accent: #f59e0b;
+  --color-accent-hover: #d97706;
+  --color-success: #10b981;
+  --color-danger: #f43f5e;
+}
+
 /* ===== Custom CSS Variables ===== */
 :root {
   --color-primary: #1e1b4b;
@@ -176,4 +187,40 @@ input:focus, textarea:focus {
 /* ===== Selection Color ===== */
 ::selection {
   background: rgba(139, 92, 246, 0.3);
+}
+
+/* ===== 360浏览器/旧浏览器兼容性修复 ===== */
+
+/* backdrop-blur 兼容回退 */
+@supports not (backdrop-filter: blur(1px)) {
+  .backdrop-blur-sm {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background-color: rgba(255, 255, 255, 0.9) !important;
+  }
+}
+
+/* oklch 颜色回退 — 为不支持 oklch 的浏览器提供 srgb 回退 */
+@supports not (color: oklch(0.5 0 0)) {
+  /* TailwindCSS v4 的颜色类会使用 oklch，这里提供回退 */
+  .text-indigo-800 { color: #3730a3 !important; }
+  .text-emerald-800 { color: #065f46 !important; }
+  .text-indigo-400 { color: #818cf8 !important; }
+  .text-emerald-400 { color: #34d399 !important; }
+  .text-amber-400 { color: #fbbf24 !important; }
+  .text-violet-400 { color: #a78bfa !important; }
+  .text-rose-400 { color: #fb7185 !important; }
+  .text-cyan-400 { color: #22d3ee !important; }
+  .text-indigo-600 { color: #4f46e5 !important; }
+  .text-emerald-600 { color: #059669 !important; }
+  .text-amber-600 { color: #d97706 !important; }
+  .text-violet-600 { color: #7c3aed !important; }
+  .text-rose-600 { color: #e11d48 !important; }
+  .text-cyan-600 { color: #0891b2 !important; }
+  .bg-indigo-500\/20 { background-color: rgba(99, 102, 241, 0.2) !important; }
+  .bg-emerald-500\/20 { background-color: rgba(16, 185, 129, 0.2) !important; }
+  .bg-violet-500\/20 { background-color: rgba(139, 92, 246, 0.2) !important; }
+  .bg-rose-500\/20 { background-color: rgba(244, 63, 94, 0.2) !important; }
+  .bg-cyan-500\/20 { background-color: rgba(6, 182, 212, 0.2) !important; }
+  .bg-amber-500\/20 { background-color: rgba(245, 158, 11, 0.2) !important; }
 }

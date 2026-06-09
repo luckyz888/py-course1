@@ -21,7 +21,25 @@ interface CodeEditorProps {
   datasetCode?: string;
 }
 
-export default function CodeEditor({ code, onCodeChange, height = '350px', datasetCode }: CodeEditorProps) {
+export default function CodeEditor({ code: initialCode, onCodeChange, height = '350px', datasetCode }: CodeEditorProps) {
+  // 自管理代码状态 — 即使父组件不传 onCodeChange 也能编辑和运行
+  const [internalCode, setInternalCode] = useState(initialCode);
+  const code = internalCode;
+
+  // 当父组件传入新的初始代码时更新（如切换课程）
+  const prevInitialCode = useRef(initialCode);
+  useEffect(() => {
+    if (initialCode !== prevInitialCode.current) {
+      prevInitialCode.current = initialCode;
+      setInternalCode(initialCode);
+    }
+  }, [initialCode]);
+
+  const handleChange = useCallback((value: string) => {
+    setInternalCode(value);
+    onCodeChange?.(value);
+  }, [onCodeChange]);
+
   const [output, setOutput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<string[]>([]);
@@ -231,7 +249,7 @@ export default function CodeEditor({ code, onCodeChange, height = '350px', datas
           language="python"
           theme="vs-dark"
           value={code}
-          onChange={(value) => onCodeChange?.(value || '')}
+          onChange={(value) => handleChange(value || '')}
           onMount={handleEditorMount}
           options={{
             minimap: { enabled: false },

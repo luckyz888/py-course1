@@ -1,7 +1,18 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import Editor from '@monaco-editor/react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Play, Loader2, Terminal, X } from 'lucide-react';
-import { runPython, isPyodideLoaded, loadPyodide, onStatusChange } from '../utils/pyodide';
+import { runPython, isPyodideLoaded, loadPyodide, onStatusChange, preloadPyodide } from '../utils/pyodide';
+
+// 懒加载 Monaco Editor
+const Editor = React.lazy(() => import('@monaco-editor/react'));
+
+function EditorFallback({ height }: { height: string }) {
+  return (
+    <div className="flex items-center justify-center bg-gray-900 text-gray-400 text-sm" style={{ height }}>
+      <Loader2 size={16} className="animate-spin mr-2" />
+      加载编辑器...
+    </div>
+  );
+}
 
 interface CodeEditorProps {
   code: string;
@@ -22,6 +33,11 @@ export default function CodeEditor({ code, onCodeChange, height = '350px', datas
   const [runCount, setRunCount] = useState(0);
   const editorRef = useRef<any>(null);
 
+  // 进入页面时预加载 Pyodide
+  useEffect(() => {
+    preloadPyodide();
+  }, []);
+
   // 监听 Pyodide 加载状态
   useEffect(() => {
     const cleanup = onStatusChange((status) => {
@@ -37,45 +53,47 @@ export default function CodeEditor({ code, onCodeChange, height = '350px', datas
     return cleanup;
   }, []);
 
-  const handleEditorMount = (editor: any, monaco: any) => {
+  // Python 补全建议 — 缓存
+  const pythonCompletions = useMemo(() => [
+    { label: 'import pandas as pd', kind: 4, insertText: 'import pandas as pd', documentation: '导入Pandas库' },
+    { label: 'pd.read_csv', kind: 3, insertText: 'pd.read_csv(${1:filepath})', documentation: '读取CSV文件' },
+    { label: 'pd.DataFrame', kind: 6, insertText: 'pd.DataFrame(${1:data})', documentation: '创建DataFrame' },
+    { label: 'df.head', kind: 2, insertText: 'df.head(${1:5})', documentation: '查看前N行' },
+    { label: 'df.info', kind: 2, insertText: 'df.info()', documentation: '查看数据信息' },
+    { label: 'df.describe', kind: 2, insertText: 'df.describe()', documentation: '描述性统计' },
+    { label: 'df.groupby', kind: 2, insertText: "df.groupby('${1:column}').${2:agg}()", documentation: '分组聚合' },
+    { label: 'df.merge', kind: 2, insertText: "pd.merge(${1:df1}, ${2:df2}, on='${3:key}')", documentation: '合并DataFrame' },
+    { label: 'df.dropna', kind: 2, insertText: 'df.dropna(${1:subset=[]})', documentation: '删除缺失值' },
+    { label: 'df.fillna', kind: 2, insertText: "df.fillna(${1:value})", documentation: '填充缺失值' },
+    { label: 'df.value_counts', kind: 2, insertText: "df['${1:column}'].value_counts()", documentation: '值计数' },
+    { label: 'df.pivot_table', kind: 2, insertText: "pd.pivot_table(df, values='${1:values}', index='${2:index}', columns='${3:columns}', aggfunc='${4:mean}')", documentation: '透视表' },
+    { label: 'df.apply', kind: 2, insertText: "df['${1:column}'].apply(${2:func})", documentation: '应用函数' },
+    { label: 'df.sort_values', kind: 2, insertText: "df.sort_values('${1:column}', ascending=${2:False})", documentation: '排序' },
+    { label: 'import numpy as np', kind: 4, insertText: 'import numpy as np', documentation: '导入NumPy库' },
+    { label: 'np.array', kind: 3, insertText: 'np.array(${1:data})', documentation: '创建数组' },
+    { label: 'np.mean', kind: 3, insertText: 'np.mean(${1:data})', documentation: '计算均值' },
+    { label: 'import matplotlib.pyplot as plt', kind: 4, insertText: "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt", documentation: '导入Matplotlib（Agg后端）' },
+    { label: 'plt.plot', kind: 3, insertText: "plt.plot(${1:x}, ${2:y})", documentation: '折线图' },
+    { label: 'plt.bar', kind: 3, insertText: "plt.bar(${1:x}, ${2:height})", documentation: '柱状图' },
+    { label: 'plt.scatter', kind: 3, insertText: "plt.scatter(${1:x}, ${2:y})", documentation: '散点图' },
+    { label: 'plt.hist', kind: 3, insertText: "plt.hist(${1:data}, bins=${2:10})", documentation: '直方图' },
+    { label: 'plt.figure', kind: 3, insertText: "plt.figure(figsize=(${1:10}, ${2:6}))", documentation: '创建画布' },
+  ], []);
+
+  const handleEditorMount = useCallback((editor: any, monaco: any) => {
     editorRef.current = editor;
 
-    // Register Python completions for data analysis
     monaco.languages.registerCompletionItemProvider('python', {
       provideCompletionItems: () => {
-        const suggestions = [
-          // Pandas
-          { label: 'import pandas as pd', kind: monaco.languages.CompletionItemKind.Snippet, insertText: 'import pandas as pd', documentation: '导入Pandas库' },
-          { label: 'pd.read_csv', kind: monaco.languages.CompletionItemKind.Function, insertText: 'pd.read_csv(${1:filepath})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '读取CSV文件' },
-          { label: 'pd.DataFrame', kind: monaco.languages.CompletionItemKind.Class, insertText: 'pd.DataFrame(${1:data})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '创建DataFrame' },
-          { label: 'df.head', kind: monaco.languages.CompletionItemKind.Method, insertText: 'df.head(${1:5})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '查看前N行' },
-          { label: 'df.info', kind: monaco.languages.CompletionItemKind.Method, insertText: 'df.info()', documentation: '查看数据信息' },
-          { label: 'df.describe', kind: monaco.languages.CompletionItemKind.Method, insertText: 'df.describe()', documentation: '描述性统计' },
-          { label: 'df.groupby', kind: monaco.languages.CompletionItemKind.Method, insertText: "df.groupby('${1:column}').${2:agg}()", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '分组聚合' },
-          { label: 'df.merge', kind: monaco.languages.CompletionItemKind.Method, insertText: "pd.merge(${1:df1}, ${2:df2}, on='${3:key}')", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '合并DataFrame' },
-          { label: 'df.dropna', kind: monaco.languages.CompletionItemKind.Method, insertText: 'df.dropna(${1:subset=[]})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '删除缺失值' },
-          { label: 'df.fillna', kind: monaco.languages.CompletionItemKind.Method, insertText: "df.fillna(${1:value})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '填充缺失值' },
-          { label: 'df.value_counts', kind: monaco.languages.CompletionItemKind.Method, insertText: "df['${1:column}'].value_counts()", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '值计数' },
-          { label: 'df.pivot_table', kind: monaco.languages.CompletionItemKind.Method, insertText: "pd.pivot_table(df, values='${1:values}', index='${2:index}', columns='${3:columns}', aggfunc='${4:mean}')", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '透视表' },
-          { label: 'df.apply', kind: monaco.languages.CompletionItemKind.Method, insertText: "df['${1:column}'].apply(${2:func})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '应用函数' },
-          { label: 'df.sort_values', kind: monaco.languages.CompletionItemKind.Method, insertText: "df.sort_values('${1:column}', ascending=${2:False})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '排序' },
-          // NumPy
-          { label: 'import numpy as np', kind: monaco.languages.CompletionItemKind.Snippet, insertText: 'import numpy as np', documentation: '导入NumPy库' },
-          { label: 'np.array', kind: monaco.languages.CompletionItemKind.Function, insertText: 'np.array(${1:data})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '创建数组' },
-          { label: 'np.mean', kind: monaco.languages.CompletionItemKind.Function, insertText: 'np.mean(${1:data})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '计算均值' },
-          // Matplotlib
-          { label: 'import matplotlib.pyplot as plt', kind: monaco.languages.CompletionItemKind.Snippet, insertText: "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt", documentation: '导入Matplotlib（Agg后端）' },
-          { label: 'plt.plot', kind: monaco.languages.CompletionItemKind.Function, insertText: "plt.plot(${1:x}, ${2:y})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '折线图' },
-          { label: 'plt.bar', kind: monaco.languages.CompletionItemKind.Function, insertText: "plt.bar(${1:x}, ${2:height})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '柱状图' },
-          { label: 'plt.scatter', kind: monaco.languages.CompletionItemKind.Function, insertText: "plt.scatter(${1:x}, ${2:y})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '散点图' },
-          { label: 'plt.hist', kind: monaco.languages.CompletionItemKind.Function, insertText: "plt.hist(${1:data}, bins=${2:10})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '直方图' },
-          { label: 'plt.figure', kind: monaco.languages.CompletionItemKind.Function, insertText: "plt.figure(figsize=(${1:10}, ${2:6}))", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: '创建画布' },
-        ];
-
+        const suggestions = pythonCompletions.map((s) => ({
+          ...s,
+          kind: s.kind as any,
+          insertTextRules: s.insertText.includes('${') ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+        }));
         return { suggestions };
       },
     });
-  };
+  }, [pythonCompletions]);
 
   // 加载 Pyodide
   const ensurePyodide = useCallback(async () => {
@@ -94,7 +112,7 @@ export default function CodeEditor({ code, onCodeChange, height = '350px', datas
     }
   }, []);
 
-  const handleRun = async () => {
+  const handleRun = useCallback(async () => {
     if (isRunning) return;
     setIsRunning(true);
     setOutput('');
@@ -128,7 +146,7 @@ export default function CodeEditor({ code, onCodeChange, height = '350px', datas
     } finally {
       setIsRunning(false);
     }
-  };
+  }, [isRunning, code, datasetCode, ensurePyodide]);
 
   // 快捷键：Ctrl+Enter 运行
   useEffect(() => {
@@ -140,7 +158,7 @@ export default function CodeEditor({ code, onCodeChange, height = '350px', datas
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [handleRun, code]);
+  }, [handleRun]);
 
   const handleClear = () => {
     setOutput('');
@@ -206,8 +224,8 @@ export default function CodeEditor({ code, onCodeChange, height = '350px', datas
         </div>
       </div>
 
-      {/* 编辑器 */}
-      <div style={{ height }}>
+      {/* 编辑器 — 懒加载 */}
+      <React.Suspense fallback={<EditorFallback height={height} />}>
         <Editor
           height={height}
           language="python"
@@ -263,7 +281,7 @@ export default function CodeEditor({ code, onCodeChange, height = '350px', datas
             foldingStrategy: 'indentation',
           }}
         />
-      </div>
+      </React.Suspense>
 
       {/* 输出区域 - 始终显示 */}
       <div className="border-t border-gray-300">

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -20,10 +20,22 @@ import {
 } from 'lucide-react';
 import { bootcampProjects } from '../data/bootcamp';
 import { useBootcampStore } from '../stores/bootcampStore';
-import Editor from '@monaco-editor/react';
-import { runPython, isPyodideLoaded, loadPyodide, onStatusChange } from '../utils/pyodide';
+import { runPython, isPyodideLoaded, loadPyodide, onStatusChange, preloadPyodide } from '../utils/pyodide';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import AIFloatingWindow from '../components/AIFloatingWindow';
+
+// 懒加载 Monaco Editor — 减少首屏加载体积
+const Editor = React.lazy(() => import('@monaco-editor/react'));
+
+// Monaco 加载中的占位符
+function EditorFallback() {
+  return (
+    <div className="flex items-center justify-center h-full bg-gray-900 text-gray-400 text-sm">
+      <Loader2 size={16} className="animate-spin mr-2" />
+      加载编辑器...
+    </div>
+  );
+}
 
 export default function BootcampProject() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -41,6 +53,11 @@ export default function BootcampProject() {
   const [leftWidth, setLeftWidth] = useState(420);
   const isDragging = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // 进入页面时立即预加载 Pyodide（后台加载，不阻塞渲染）
+  useEffect(() => {
+    preloadPyodide();
+  }, []);
 
   const handleDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -176,7 +193,7 @@ interface KnowledgePanelProps {
   onLoadCode: (code: string) => void;
 }
 
-function KnowledgePanel({
+const KnowledgePanel = memo(function KnowledgePanel({
   project,
   expandedSections,
   expandedItems,
@@ -186,13 +203,13 @@ function KnowledgePanel({
 }: KnowledgePanelProps) {
   const store = useBootcampStore();
 
-  const importanceConfig = {
+  const importanceConfig = useMemo(() => ({
     core: { label: '核心', color: 'bg-rose-100 text-rose-700', dot: 'bg-rose-500' },
     important: { label: '重要', color: 'bg-amber-100 text-amber-700', dot: 'bg-amber-400' },
     supplementary: { label: '补充', color: 'bg-sky-100 text-sky-700', dot: 'bg-sky-400' },
-  };
+  }), []);
 
-  const sectionColors = [
+  const sectionColors = useMemo(() => [
     'from-indigo-500 to-indigo-700',
     'from-emerald-500 to-emerald-700',
     'from-amber-500 to-amber-700',
@@ -200,7 +217,7 @@ function KnowledgePanel({
     'from-violet-500 to-violet-700',
     'from-cyan-500 to-cyan-700',
     'from-orange-500 to-orange-700',
-  ];
+  ], []);
 
   return (
     <div className="p-4 space-y-4">
@@ -300,7 +317,7 @@ function KnowledgePanel({
                                   {item.codeExample}
                                 </pre>
                                 <button
-                                  onClick={() => onLoadCode(item.codeExample)}
+                                  onClick={() => onLoadCode(item.codeExample!)}
                                   className="absolute top-2 right-2 flex items-center gap-1 px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-medium rounded-md transition-colors shadow-sm"
                                 >
                                   <Play size={10} />
@@ -362,7 +379,7 @@ function KnowledgePanel({
       </div>
     </div>
   );
-}
+});
 
 // ==================== 右侧代码工作台 ====================
 
@@ -403,7 +420,52 @@ function Workspace({ project, code, onCodeChange, showReference, onToggleReferen
     return cleanup;
   }, []);
 
-  const handleRun = async () => {
+  // Python 自动补全建议 — 缓存避免每次渲染重建
+  const pythonCompletions = useMemo(() => [
+    { label: 'import pandas as pd', kind: 4, insertText: 'import pandas as pd', documentation: '导入Pandas库' },
+    { label: 'pd.read_csv', kind: 3, insertText: "pd.read_csv('${1:file}')", documentation: '读取CSV文件' },
+    { label: 'pd.DataFrame', kind: 6, insertText: 'pd.DataFrame(${1:data})', documentation: '创建DataFrame' },
+    { label: 'df.head', kind: 2, insertText: 'df.head(${1:5})', documentation: '查看前N行' },
+    { label: 'df.info', kind: 2, insertText: 'df.info()', documentation: '查看数据信息' },
+    { label: 'df.describe', kind: 2, insertText: 'df.describe()', documentation: '描述性统计' },
+    { label: 'df.groupby', kind: 2, insertText: "df.groupby('${1:col}').${2:agg}()", documentation: '分组聚合' },
+    { label: 'df.dropna', kind: 2, insertText: 'df.dropna()', documentation: '删除缺失值' },
+    { label: 'df.fillna', kind: 2, insertText: "df.fillna(${1:0})", documentation: '填充缺失值' },
+    { label: 'df.value_counts', kind: 2, insertText: "df['${1:col}'].value_counts()", documentation: '值计数' },
+    { label: 'df.sort_values', kind: 2, insertText: "df.sort_values('${1:col}', ascending=${2:False})", documentation: '排序' },
+    { label: 'df.apply', kind: 2, insertText: "df['${1:col}'].apply(${2:func})", documentation: '应用函数' },
+    { label: 'df.pivot_table', kind: 2, insertText: "pd.pivot_table(df, values='${1:val}', index='${2:idx}', aggfunc='${3:mean}')", documentation: '透视表' },
+    { label: 'df.merge', kind: 2, insertText: "pd.merge(${1:df1}, ${2:df2}, on='${3:key}')", documentation: '合并DataFrame' },
+    { label: 'import numpy as np', kind: 4, insertText: 'import numpy as np', documentation: '导入NumPy库' },
+    { label: 'np.mean', kind: 3, insertText: 'np.mean(${1:data})', documentation: '计算均值' },
+    { label: 'import matplotlib', kind: 4, insertText: "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt", documentation: '导入Matplotlib（Agg后端）' },
+    { label: 'plt.plot', kind: 3, insertText: "plt.plot(${1:x}, ${2:y})", documentation: '折线图' },
+    { label: 'plt.bar', kind: 3, insertText: "plt.bar(${1:x}, ${2:height})", documentation: '柱状图' },
+    { label: 'plt.scatter', kind: 3, insertText: "plt.scatter(${1:x}, ${2:y})", documentation: '散点图' },
+  ], []);
+
+  const handleEditorMount = useCallback((_editor: any, monaco: any) => {
+    monaco.languages.registerCompletionItemProvider('python', {
+      provideCompletionItems: (model: any, position: any) => {
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn,
+        };
+        const suggestions = pythonCompletions.map((s) => ({
+          ...s,
+          kind: s.kind as any,
+          range,
+          insertTextRules: s.insertText.includes('${') ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+        }));
+        return { suggestions };
+      },
+    });
+  }, [pythonCompletions]);
+
+  const handleRun = useCallback(async () => {
     if (isRunning) return;
     setIsRunning(true);
     setOutput('');
@@ -438,22 +500,22 @@ function Workspace({ project, code, onCodeChange, showReference, onToggleReferen
     } finally {
       setIsRunning(false);
     }
-  };
+  }, [isRunning, code, project.datasetCode]);
 
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     onCodeChange(project.starterCode);
     setOutput('');
     setError(null);
     setImages([]);
-  };
+  }, [onCodeChange, project.starterCode]);
 
-  const handleLoadReference = () => {
+  const handleLoadReference = useCallback(() => {
     onCodeChange(project.referenceSolution);
     onCloseReference();
-  };
+  }, [onCodeChange, project.referenceSolution, onCloseReference]);
 
   // 文件上传处理
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -473,7 +535,6 @@ function Workspace({ project, code, onCodeChange, showReference, onToggleReferen
       const buffer = await file.arrayBuffer();
       const uint8 = new Uint8Array(buffer);
 
-      // 写入 Pyodide 虚拟文件系统
       const targetPath = ext === 'csv' || ext === 'tsv' ? '/uploaded_data.csv' : '/uploaded_data.xlsx';
       (window as any).pyodide.FS.writeFile(targetPath, uint8);
 
@@ -486,7 +547,7 @@ function Workspace({ project, code, onCodeChange, showReference, onToggleReferen
     }
 
     e.target.value = '';
-  };
+  }, []);
 
   // 垂直拖拽：调节编辑器和输出面板的高度
   const handleVDragStart = useCallback((e: React.MouseEvent) => {
@@ -524,7 +585,7 @@ function Workspace({ project, code, onCodeChange, showReference, onToggleReferen
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [handleRun, code]);
+  }, [handleRun]);
 
   const hasOutput = output || error || images.length > 0;
 
@@ -632,83 +693,49 @@ function Workspace({ project, code, onCodeChange, showReference, onToggleReferen
         </div>
       )}
 
-      {/* 代码编辑器 */}
+      {/* 代码编辑器 — 懒加载 */}
       <div className="flex-1 min-h-0" style={{ minHeight: '120px' }}>
-        <Editor
-          height="100%"
-          language="python"
-          theme="vs-dark"
-          value={code}
-          onChange={(value) => onCodeChange(value || '')}
-          onMount={(_editor, monaco) => {
-            // 注册 Python 数据分析自动补全
-            monaco.languages.registerCompletionItemProvider('python', {
-              provideCompletionItems: (model: any, position: any) => {
-                const word = model.getWordUntilPosition(position);
-                const range = {
-                  startLineNumber: position.lineNumber,
-                  endLineNumber: position.lineNumber,
-                  startColumn: word.startColumn,
-                  endColumn: word.endColumn,
-                };
-                const suggestions = [
-                  { label: 'import pandas as pd', kind: monaco.languages.CompletionItemKind.Snippet, insertText: 'import pandas as pd', range, documentation: '导入Pandas库' },
-                  { label: 'pd.read_csv', kind: monaco.languages.CompletionItemKind.Function, insertText: "pd.read_csv('${1:file}')", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '读取CSV文件' },
-                  { label: 'pd.DataFrame', kind: monaco.languages.CompletionItemKind.Class, insertText: 'pd.DataFrame(${1:data})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '创建DataFrame' },
-                  { label: 'df.head', kind: monaco.languages.CompletionItemKind.Method, insertText: 'df.head(${1:5})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '查看前N行' },
-                  { label: 'df.info', kind: monaco.languages.CompletionItemKind.Method, insertText: 'df.info()', range, documentation: '查看数据信息' },
-                  { label: 'df.describe', kind: monaco.languages.CompletionItemKind.Method, insertText: 'df.describe()', range, documentation: '描述性统计' },
-                  { label: 'df.groupby', kind: monaco.languages.CompletionItemKind.Method, insertText: "df.groupby('${1:col}').${2:agg}()", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '分组聚合' },
-                  { label: 'df.dropna', kind: monaco.languages.CompletionItemKind.Method, insertText: 'df.dropna()', range, documentation: '删除缺失值' },
-                  { label: 'df.fillna', kind: monaco.languages.CompletionItemKind.Method, insertText: "df.fillna(${1:0})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '填充缺失值' },
-                  { label: 'df.value_counts', kind: monaco.languages.CompletionItemKind.Method, insertText: "df['${1:col}'].value_counts()", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '值计数' },
-                  { label: 'df.sort_values', kind: monaco.languages.CompletionItemKind.Method, insertText: "df.sort_values('${1:col}', ascending=${2:False})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '排序' },
-                  { label: 'df.apply', kind: monaco.languages.CompletionItemKind.Method, insertText: "df['${1:col}'].apply(${2:func})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '应用函数' },
-                  { label: 'df.pivot_table', kind: monaco.languages.CompletionItemKind.Method, insertText: "pd.pivot_table(df, values='${1:val}', index='${2:idx}', aggfunc='${3:mean}')", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '透视表' },
-                  { label: 'df.merge', kind: monaco.languages.CompletionItemKind.Method, insertText: "pd.merge(${1:df1}, ${2:df2}, on='${3:key}')", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '合并DataFrame' },
-                  { label: 'import numpy as np', kind: monaco.languages.CompletionItemKind.Snippet, insertText: 'import numpy as np', range, documentation: '导入NumPy库' },
-                  { label: 'np.mean', kind: monaco.languages.CompletionItemKind.Function, insertText: 'np.mean(${1:data})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '计算均值' },
-                  { label: 'import matplotlib', kind: monaco.languages.CompletionItemKind.Snippet, insertText: "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt", range, documentation: '导入Matplotlib（Agg后端）' },
-                  { label: 'plt.plot', kind: monaco.languages.CompletionItemKind.Function, insertText: "plt.plot(${1:x}, ${2:y})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '折线图' },
-                  { label: 'plt.bar', kind: monaco.languages.CompletionItemKind.Function, insertText: "plt.bar(${1:x}, ${2:height})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '柱状图' },
-                  { label: 'plt.scatter', kind: monaco.languages.CompletionItemKind.Function, insertText: "plt.scatter(${1:x}, ${2:y})", insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, range, documentation: '散点图' },
-                ];
-                return { suggestions };
+        <React.Suspense fallback={<EditorFallback />}>
+          <Editor
+            height="100%"
+            language="python"
+            theme="vs-dark"
+            value={code}
+            onChange={(value) => onCodeChange(value || '')}
+            onMount={handleEditorMount}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 14,
+              lineNumbers: 'on',
+              scrollBeyondLastLine: false,
+              automaticLayout: true,
+              tabSize: 4,
+              wordWrap: 'on',
+              padding: { top: 12 },
+              suggestOnTriggerCharacters: true,
+              quickSuggestions: { other: true, comments: false, strings: true },
+              suggest: {
+                showKeywords: true,
+                showSnippets: true,
+                showFunctions: true,
+                showVariables: true,
+                showClasses: true,
+                showModules: true,
               },
-            });
-          }}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 14,
-            lineNumbers: 'on',
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-            tabSize: 4,
-            wordWrap: 'on',
-            padding: { top: 12 },
-            suggestOnTriggerCharacters: true,
-            quickSuggestions: { other: true, comments: false, strings: true },
-            suggest: {
-              showKeywords: true,
-              showSnippets: true,
-              showFunctions: true,
-              showVariables: true,
-              showClasses: true,
-              showModules: true,
-            },
-            parameterHints: { enabled: true },
-            autoIndent: 'full',
-            bracketPairColorization: { enabled: true },
-            guides: { bracketPairs: true, indentation: true },
-            hover: { enabled: true },
-            scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-            cursorBlinking: 'smooth',
-            cursorSmoothCaretAnimation: 'on',
-            smoothScrolling: true,
-            folding: true,
-            foldingStrategy: 'indentation',
-          }}
-        />
+              parameterHints: { enabled: true },
+              autoIndent: 'full',
+              bracketPairColorization: { enabled: true },
+              guides: { bracketPairs: true, indentation: true },
+              hover: { enabled: true },
+              scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+              cursorBlinking: 'smooth',
+              cursorSmoothCaretAnimation: 'on',
+              smoothScrolling: true,
+              folding: true,
+              foldingStrategy: 'indentation',
+            }}
+          />
+        </React.Suspense>
       </div>
 
       {/* 上下拖拽分割条 */}

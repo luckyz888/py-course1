@@ -21,24 +21,15 @@ interface CodeEditorProps {
   datasetCode?: string;
 }
 
-export default function CodeEditor({ code: initialCode, onCodeChange, height = '350px', datasetCode }: CodeEditorProps) {
-  // 自管理代码状态 — 即使父组件不传 onCodeChange 也能编辑和运行
-  const [internalCode, setInternalCode] = useState(initialCode);
-  const code = internalCode;
+export default function CodeEditor({ code: codeProp, onCodeChange, height = '350px', datasetCode }: CodeEditorProps) {
+  // 内部维护代码状态，确保运行时使用编辑器中的最新代码
+  const [internalCode, setInternalCode] = useState(codeProp);
+  const editorRef = useRef<any>(null);
 
-  // 当父组件传入新的初始代码时更新（如切换课程）
-  const prevInitialCode = useRef(initialCode);
+  // 当外部 prop 变化时同步（如切换课程）
   useEffect(() => {
-    if (initialCode !== prevInitialCode.current) {
-      prevInitialCode.current = initialCode;
-      setInternalCode(initialCode);
-    }
-  }, [initialCode]);
-
-  const handleChange = useCallback((value: string) => {
-    setInternalCode(value);
-    onCodeChange?.(value);
-  }, [onCodeChange]);
+    setInternalCode(codeProp);
+  }, [codeProp]);
 
   const [output, setOutput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +40,6 @@ export default function CodeEditor({ code: initialCode, onCodeChange, height = '
   );
   const [loadingStatus, setLoadingStatus] = useState('');
   const [runCount, setRunCount] = useState(0);
-  const editorRef = useRef<any>(null);
 
   // 进入页面时预加载 Pyodide
   useEffect(() => {
@@ -154,8 +144,8 @@ export default function CodeEditor({ code: initialCode, onCodeChange, height = '
         }
       }
 
-      // 运行用户代码
-      const result = await runPython(code);
+      // 运行编辑器中的最新代码（使用内部状态）
+      const result = await runPython(internalCode);
       setOutput(result.output);
       setError(result.error);
       setImages(result.images);
@@ -164,7 +154,7 @@ export default function CodeEditor({ code: initialCode, onCodeChange, height = '
     } finally {
       setIsRunning(false);
     }
-  }, [isRunning, code, datasetCode, ensurePyodide]);
+  }, [isRunning, internalCode, datasetCode, ensurePyodide]);
 
   // 快捷键：Ctrl+Enter 运行
   useEffect(() => {
@@ -177,6 +167,11 @@ export default function CodeEditor({ code: initialCode, onCodeChange, height = '
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [handleRun]);
+
+  const handleCodeChange = useCallback((value: string) => {
+    setInternalCode(value);
+    onCodeChange?.(value);
+  }, [onCodeChange]);
 
   const handleClear = () => {
     setOutput('');
@@ -248,8 +243,8 @@ export default function CodeEditor({ code: initialCode, onCodeChange, height = '
           height={height}
           language="python"
           theme="vs-dark"
-          value={code}
-          onChange={(value) => handleChange(value || '')}
+          value={internalCode}
+          onChange={(value) => handleCodeChange(value || '')}
           onMount={handleEditorMount}
           options={{
             minimap: { enabled: false },

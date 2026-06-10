@@ -59,29 +59,40 @@ export default function BootcampProject() {
     preloadPyodide();
   }, []);
 
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
+  const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     isDragging.current = true;
-    document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const getClientX = (e: MouseEvent | TouchEvent): number => {
+      if ('touches' in e) {
+        const t = e.touches[0] || (e as TouchEvent).changedTouches[0];
+        return t ? t.clientX : 0;
+      }
+      return (e as MouseEvent).clientX;
+    };
+
+    const handleMove = (e: MouseEvent | TouchEvent) => {
       if (!isDragging.current || !containerRef.current) return;
       const containerRect = containerRef.current.getBoundingClientRect();
-      const newWidth = Math.max(280, Math.min(e.clientX - containerRect.left, containerRect.width - 400));
+      const newWidth = Math.max(280, Math.min(getClientX(e) - containerRect.left, containerRect.width - 400));
       setLeftWidth(newWidth);
     };
 
-    const handleMouseUp = () => {
+    const handleEnd = () => {
       isDragging.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleEnd);
+      document.removeEventListener('touchmove', handleMove);
+      document.removeEventListener('touchend', handleEnd);
     };
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleEnd);
+    document.addEventListener('touchmove', handleMove, { passive: false });
+    document.addEventListener('touchend', handleEnd);
   }, []);
 
   const handleCodeChange = useCallback(
@@ -160,6 +171,7 @@ export default function BootcampProject() {
         {/* 拖拽分割条 */}
         <div
           onMouseDown={handleDragStart}
+          onTouchStart={handleDragStart}
           className="w-1.5 shrink-0 bg-gray-200 hover:bg-indigo-400 cursor-col-resize transition-colors relative group"
         >
           <div className="absolute inset-y-0 -left-1 -right-1" />
@@ -550,29 +562,40 @@ function Workspace({ project, code, onCodeChange, showReference, onToggleReferen
   }, []);
 
   // 垂直拖拽：调节编辑器和输出面板的高度
-  const handleVDragStart = useCallback((e: React.MouseEvent) => {
+  const handleVDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     isVDragging.current = true;
-    document.body.style.cursor = 'row-resize';
     document.body.style.userSelect = 'none';
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const getClientY = (e: MouseEvent | TouchEvent): number => {
+      if ('touches' in e) {
+        const t = e.touches[0] || (e as TouchEvent).changedTouches[0];
+        return t ? t.clientY : 0;
+      }
+      return (e as MouseEvent).clientY;
+    };
+
+    const handleMove = (e: MouseEvent | TouchEvent) => {
       if (!isVDragging.current || !workspaceRef.current) return;
       const rect = workspaceRef.current.getBoundingClientRect();
-      const newHeight = Math.max(100, Math.min(rect.bottom - e.clientY, rect.height - 150));
+      const newHeight = Math.max(100, Math.min(rect.bottom - getClientY(e), rect.height - 150));
       setBottomHeight(newHeight);
     };
 
-    const handleMouseUp = () => {
+    const handleEnd = () => {
       isVDragging.current = false;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleEnd);
+      document.removeEventListener('touchmove', handleMove);
+      document.removeEventListener('touchend', handleEnd);
     };
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleEnd);
+    document.addEventListener('touchmove', handleMove, { passive: false });
+    document.addEventListener('touchend', handleEnd);
   }, []);
 
   // Ctrl+Enter 快捷键
@@ -741,6 +764,7 @@ function Workspace({ project, code, onCodeChange, showReference, onToggleReferen
       {/* 上下拖拽分割条 */}
       <div
         onMouseDown={handleVDragStart}
+        onTouchStart={handleVDragStart}
         className="h-1.5 shrink-0 bg-gray-200 hover:bg-indigo-400 cursor-row-resize transition-colors relative group flex items-center justify-center"
       >
         <div className="w-8 h-1 rounded-full bg-gray-400 group-hover:bg-indigo-500 transition-colors" />

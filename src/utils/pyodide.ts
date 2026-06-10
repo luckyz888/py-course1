@@ -3,6 +3,12 @@ let stdoutInitialized = false;
 let packagesLoaded = false;
 let loadingPromise: Promise<any> | null = null;
 
+// globalThis 兼容性 polyfill
+const _global: any = typeof globalThis !== 'undefined' ? globalThis
+  : typeof window !== 'undefined' ? window
+  : typeof self !== 'undefined' ? self
+  : {};
+
 type StatusCallback = (status: string) => void;
 const statusCallbacks = new Set<StatusCallback>();
 
@@ -16,14 +22,18 @@ function setStatus(status: string) {
 }
 
 export async function loadPyodide() {
+  // 已经加载成功，直接返回
   if (pyodide && packagesLoaded) return pyodide;
+
+  // 正在加载中，复用同一个 Promise（防止多次并发加载）
   if (loadingPromise) return loadingPromise;
 
   loadingPromise = (async () => {
     try {
       setStatus('正在下载 Python 运行环境...');
 
-      if (!(globalThis as any).loadPyodide) {
+      // 加载 Pyodide 脚本
+      if (!(_global as any).loadPyodide) {
         await new Promise<void>((resolve, reject) => {
           const script = document.createElement('script');
           script.src = 'https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js';
@@ -35,10 +45,11 @@ export async function loadPyodide() {
 
       setStatus('正在初始化 Python...');
       // @ts-ignore
-      pyodide = await globalThis.loadPyodide({
+      pyodide = await (_global as any).loadPyodide({
         indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.25.1/full/'
       });
 
+      // 加载预编译的数据分析包
       setStatus('正在加载 numpy（约10秒）...');
       await pyodide.loadPackage('numpy');
 
@@ -48,6 +59,7 @@ export async function loadPyodide() {
       setStatus('正在加载 matplotlib...');
       await pyodide.loadPackage('matplotlib');
 
+      // 设置 matplotlib 非交互后端
       await pyodide.runPythonAsync(`import matplotlib; matplotlib.use('Agg')`);
 
       packagesLoaded = true;
@@ -57,7 +69,7 @@ export async function loadPyodide() {
       console.error('Pyodide 加载失败:', err);
       pyodide = null;
       packagesLoaded = false;
-      loadingPromise = null;
+      loadingPromise = null; // 允许重试
       setStatus('加载失败');
       throw err;
     }
@@ -66,10 +78,11 @@ export async function loadPyodide() {
   return loadingPromise;
 }
 
+/** 在后台预加载 Pyodide，不阻塞页面渲染 */
 export function preloadPyodide() {
   if (pyodide && packagesLoaded) return;
-  if (loadingPromise) return;
-  loadPyodide().catch(() => {});
+  if (loadingPromise) return; // 已在加载中
+  loadPyodide().catch(() => {}); // 静默失败，不阻塞
 }
 
 async function ensureStdoutCapture() {
@@ -81,8 +94,7 @@ class OutputCapture:
     def __init__(self):
         self.outputs = []
     def write(self, text):
-        if text:
-            self.outputs.append(text)
+        self.outputs.append(text)
     def flush(self):
         pass
 _capture = OutputCapture()
@@ -103,33 +115,8 @@ export async function runPython(code: string): Promise<{ output: string; error: 
     await ensureStdoutCapture();
     await pyodide.runPythonAsync(`_capture.outputs.clear()`);
 
-    // 用 AST 检测最后一行是否为表达式 — 如果是，自动 print 其结果（REPL 行为）
-    const wrappedCode = `
-import ast, sys
-_code = ${JSON.stringify(code)}
-try:
-    _tree = ast.parse(_code)
-    if _tree.body:
-        _last = _tree.body[-1]
-        if isinstance(_last, ast.Expr):
-            # 最后一行是表达式，执行前面的语句，再 eval 最后一行并 print
-            _exec_code = ast.Module(body=_tree.body[:-1], type_ignores=[])
-            _eval_code = ast.Expression(body=_last.value)
-            if _tree.body[:-1]:
-                exec(compile(_exec_code, '<user>', 'exec'))
-            _result = eval(compile(_eval_code, '<user>', 'eval'))
-            if _result is not None:
-                print(repr(_result))
-        else:
-            exec(_code)
-    else:
-        exec(_code)
-except SyntaxError:
-    exec(_code)
-`;
-
-    // 运行包装后的代码
-    await pyodide.runPythonAsync(wrappedCode);
+    // 运行用户代码
+    await pyodide.runPythonAsync(code);
 
     // 捕获 matplotlib 图片
     const hasMpl = await pyodide.runPythonAsync(`'matplotlib' in __import__('sys').modules`);

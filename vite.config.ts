@@ -7,6 +7,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: '/',
   build: {
+    // 兼容主流浏览器（ES2020 = Chrome 80+, Firefox 72+, Safari 13.1+, Edge 80+）
+    target: 'es2020',
     // 提高 chunk 大小警告阈值
     chunkSizeWarningLimit: 1000,
     rollupOptions: {

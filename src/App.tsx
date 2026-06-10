@@ -13,6 +13,18 @@ import BootcampProject from './pages/BootcampProject';
 import LearningPlan from './pages/LearningPlan';
 import Auth from './pages/Auth';
 import AIChat from './pages/AIChat';
+import { preloadPyodide } from './utils/pyodide';
+
+// 进入网站立即在后台预加载 Python 环境
+// 用户浏览首页时，Python 环境已在后台下载，进入课程页时可能已就绪
+preloadPyodide();
+
+// 注册 Service Worker 缓存 Pyodide 文件，二次访问秒加载
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
 
 function App() {
   return (

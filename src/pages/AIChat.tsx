@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Trash2, Bot, User, Loader2, MessageSquare } from 'lucide-react';
+import { Send, Trash2, Bot, User, Loader2, MessageSquare, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAIChatStore } from '../stores/aiChatStore';
-import { chatCompletionStream, readStream, AI_ASSISTANT_SYSTEM_PROMPT } from '../utils/zhipuAI';
+import { chatCompletionStream, chatCompletion, readStream, AI_ASSISTANT_SYSTEM_PROMPT } from '../utils/zhipuAI';
 import type { ChatMessage } from '../utils/zhipuAI';
 import { generateId } from '../utils/aiCoach';
 
@@ -15,6 +15,7 @@ const SUGGESTED_PROMPTS = [
 export default function AIChat() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [retryPrompt, setRetryPrompt] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const messages = useAIChatStore((s) => s.messages);
@@ -48,6 +49,7 @@ export default function AIChat() {
 
     setInput('');
     setIsLoading(true);
+    setRetryPrompt(null);
 
     try {
       const recentHistory = messages.slice(-10);
@@ -62,24 +64,52 @@ export default function AIChat() {
         { role: 'user', content: trimmed },
       ];
 
-      const stream = await chatCompletionStream(apiMessages);
-      let fullContent = '';
+      // 尝试流式调用，失败时回退到非流式
+      try {
+        const stream = await chatCompletionStream(apiMessages);
+        let fullContent = '';
 
-      await readStream(
-        stream,
-        (token) => {
-          fullContent += token;
-          updateMessage(aiMsgId, fullContent);
-        },
-        () => setIsLoading(false),
-        (err) => {
-          updateMessage(aiMsgId, fullContent || `AI回复出错：${err.message}`);
-          setIsLoading(false);
+        await readStream(
+          stream,
+          (token) => {
+            fullContent += token;
+            updateMessage(aiMsgId, fullContent);
+          },
+          () => {
+            setIsLoading(false);
+            setRetryPrompt(null);
+          },
+          (err) => {
+            updateMessage(aiMsgId, fullContent || `AI回复出错：${err.message}`);
+            setIsLoading(false);
+            if (!fullContent) setRetryPrompt(trimmed);
+          }
+        );
+      } catch {
+        // 流式不支持或失败，回退到非流式
+        try {
+          const content = await chatCompletion(apiMessages);
+          updateMessage(aiMsgId, content || 'AI回复为空');
+        } catch (err: any) {
+          const isRateLimit = err.message?.includes('访问量过大') || err.message?.includes('重试');
+          updateMessage(aiMsgId, isRateLimit
+            ? 'AI服务当前访问量较大，请稍等片刻再试'
+            : `请求失败：${err.message || '网络错误，请稍后重试'}`
+          );
+          setRetryPrompt(trimmed);
         }
-      );
+        setIsLoading(false);
+      }
     } catch (err: any) {
       updateMessage(aiMsgId, `请求失败：${err.message || '网络错误，请稍后重试'}`);
       setIsLoading(false);
+      setRetryPrompt(trimmed);
+    }
+  };
+
+  const handleRetry = () => {
+    if (retryPrompt) {
+      sendMessage(retryPrompt);
     }
   };
 
@@ -87,6 +117,14 @@ export default function AIChat() {
     e.preventDefault();
     sendMessage(input);
   };
+
+  // 检查最后一条消息是否是错误消息
+  const lastMsg = messages[messages.length - 1];
+  const isLastMsgError = lastMsg?.role === 'assistant' && (
+    lastMsg.content.startsWith('请求失败') ||
+    lastMsg.content.startsWith('AI回复出错') ||
+    lastMsg.content.startsWith('AI服务当前访问量')
+  );
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] max-w-3xl mx-auto">
@@ -98,7 +136,7 @@ export default function AIChat() {
           </div>
           <div>
             <h2 className="font-semibold text-gray-800">AI 助手</h2>
-            <p className="text-xs text-gray-400">由智谱 GLM-4.7-Flash 驱动</p>
+            <p className="text-xs text-gray-400">由智谱 GLM 大模型驱动</p>
           </div>
         </div>
         {messages.length > 0 && (
@@ -155,11 +193,18 @@ export default function AIChat() {
             <div
               className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
                 msg.role === 'assistant'
-                  ? 'bg-white text-gray-800 shadow-sm border border-gray-100 rounded-tl-sm'
+                  ? msg.content.startsWith('请求失败') || msg.content.startsWith('AI回复出错') || msg.content.startsWith('AI服务当前访问量')
+                    ? 'bg-red-50 text-red-700 border border-red-200 rounded-tl-sm'
+                    : 'bg-white text-gray-800 shadow-sm border border-gray-100 rounded-tl-sm'
                   : 'bg-indigo-600 text-white rounded-tr-sm'
               }`}
             >
-              {msg.content ? (
+              {(msg.role === 'assistant' && (msg.content.startsWith('请求失败') || msg.content.startsWith('AI服务当前访问量'))) ? (
+                <div className="flex items-start gap-2">
+                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                  <span className="whitespace-pre-wrap">{msg.content}</span>
+                </div>
+              ) : msg.content ? (
                 <div className="whitespace-pre-wrap">{msg.content}</div>
               ) : (
                 <span className="inline-flex items-center gap-1.5 text-gray-400">
@@ -170,6 +215,20 @@ export default function AIChat() {
             </div>
           </div>
         ))}
+
+        {/* 重试按钮 */}
+        {isLastMsgError && retryPrompt && !isLoading && (
+          <div className="flex justify-center">
+            <button
+              onClick={handleRetry}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+            >
+              <RefreshCw size={14} />
+              重新发送
+            </button>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 

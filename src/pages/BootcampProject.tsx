@@ -27,6 +27,13 @@ import AIFloatingWindow from '../components/AIFloatingWindow';
 // 懒加载 Monaco Editor — 减少首屏加载体积
 const Editor = React.lazy(() => import('@monaco-editor/react'));
 
+// 检测移动设备
+function isMobileDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 0 && window.innerWidth < 768);
+}
+
 // Monaco 加载中的占位符
 function EditorFallback() {
   return (
@@ -716,10 +723,20 @@ function Workspace({ project, code, onCodeChange, showReference, onToggleReferen
         </div>
       )}
 
-      {/* 代码编辑器 — 懒加载 */}
+      {/* 代码编辑器 — 移动端用 textarea，桌面端用 Monaco */}
       <div className="flex-1 min-h-0" style={{ minHeight: '120px' }}>
-        <React.Suspense fallback={<EditorFallback />}>
-          <Editor
+        {isMobileDevice() ? (
+          <textarea
+            value={code}
+            onChange={(e) => onCodeChange(e.target.value)}
+            className="w-full h-full bg-gray-900 text-green-300 p-3 text-sm font-mono leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500/50 border-0"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+        ) : (
+          <React.Suspense fallback={<EditorFallback />}>
+            <Editor
             height="100%"
             language="python"
             theme="vs-dark"
@@ -759,6 +776,7 @@ function Workspace({ project, code, onCodeChange, showReference, onToggleReferen
             }}
           />
         </React.Suspense>
+        )}
       </div>
 
       {/* 上下拖拽分割条 */}

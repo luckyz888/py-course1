@@ -487,6 +487,9 @@ export default function Home() {
         </div>
       </section>
 
+      {/* 在线代码编辑器 */}
+      <HomeCodeEditor />
+
       {/* 讲师团队 */}
       <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden animate-fade-in">
         <div className="bg-gradient-to-r from-rose-500 to-orange-400 px-6 py-3">
@@ -565,9 +568,6 @@ export default function Home() {
           </div>
         </div>
       </section>
-
-      {/* 在线代码编辑器 */}
-      <HomeCodeEditor />
     </div>
   );
 }

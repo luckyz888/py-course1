@@ -172,6 +172,7 @@ export default function BootcampProject() {
             onToggleSection={toggleSection}
             onToggleItem={toggleItem}
             onLoadCode={handleCodeChange}
+            datasetCode={project.datasetCode}
           />
         </div>
 
@@ -210,6 +211,7 @@ interface KnowledgePanelProps {
   onToggleSection: (title: string) => void;
   onToggleItem: (key: string) => void;
   onLoadCode: (code: string) => void;
+  datasetCode: string;
 }
 
 const KnowledgePanel = memo(function KnowledgePanel({
@@ -219,6 +221,7 @@ const KnowledgePanel = memo(function KnowledgePanel({
   onToggleSection,
   onToggleItem,
   onLoadCode,
+  datasetCode,
 }: KnowledgePanelProps) {
   const store = useBootcampStore();
 
@@ -336,7 +339,11 @@ const KnowledgePanel = memo(function KnowledgePanel({
                                   {item.codeExample}
                                 </pre>
                                 <button
-                                  onClick={() => onLoadCode(item.codeExample!)}
+                                  onClick={() => {
+                                    // 将数据集代码 + 示例代码合并，确保可独立运行
+                                    const fullCode = `${datasetCode}\n\n# ===== 示例代码 =====\n${item.codeExample}`;
+                                    onLoadCode(fullCode);
+                                  }}
                                   className="absolute top-2 right-2 flex items-center gap-1 px-2.5 py-1 bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-medium rounded-md transition-colors shadow-sm"
                                 >
                                   <Play size={10} />

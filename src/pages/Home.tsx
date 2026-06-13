@@ -7,6 +7,13 @@ import { runPython, isPyodideLoaded, loadPyodide, onStatusChange } from '../util
 // 懒加载 Monaco Editor
 const Editor = React.lazy(() => import('@monaco-editor/react'));
 
+// 检测移动设备
+function isMobileDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 0 && window.innerWidth < 768);
+}
+
 function EditorFallback() {
   return (
     <div className="flex items-center justify-center h-full bg-gray-900 text-gray-400 text-sm">
@@ -741,35 +748,46 @@ function HomeCodeEditor() {
           </div>
         </div>
 
-        {/* 编辑器 */}
+        {/* 编辑器 — 移动端用 textarea */}
         <div style={{ height: '360px' }}>
-          <React.Suspense fallback={<EditorFallback />}>
-            <Editor
-              height="100%"
-              language="python"
-              theme="vs-dark"
+          {isMobileDevice() ? (
+            <textarea
               value={code}
-              onChange={(value) => setCode(value || '')}
-              onMount={handleEditorMount}
-              options={{
-                minimap: { enabled: false },
-                fontSize: 14,
-                lineNumbers: 'on',
-                scrollBeyondLastLine: false,
-                automaticLayout: true,
-                tabSize: 4,
-                wordWrap: 'on',
-                padding: { top: 12 },
-                suggestOnTriggerCharacters: true,
-                quickSuggestions: { other: true, comments: false, strings: true },
-                scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-                cursorBlinking: 'smooth',
-                smoothScrolling: true,
-                folding: true,
-                foldingStrategy: 'indentation',
-              }}
+              onChange={(e) => setCode(e.target.value)}
+              className="w-full h-full bg-gray-900 text-green-300 p-3 text-sm font-mono leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500/50 border-0"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
             />
-          </React.Suspense>
+          ) : (
+            <React.Suspense fallback={<EditorFallback />}>
+              <Editor
+                height="100%"
+                language="python"
+                theme="vs-dark"
+                value={code}
+                onChange={(value) => setCode(value || '')}
+                onMount={handleEditorMount}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  lineNumbers: 'on',
+                  scrollBeyondLastLine: false,
+                  automaticLayout: true,
+                  tabSize: 4,
+                  wordWrap: 'on',
+                  padding: { top: 12 },
+                  suggestOnTriggerCharacters: true,
+                  quickSuggestions: { other: true, comments: false, strings: true },
+                  scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+                  cursorBlinking: 'smooth',
+                  smoothScrolling: true,
+                  folding: true,
+                  foldingStrategy: 'indentation',
+                }}
+              />
+            </React.Suspense>
+          )}
         </div>
 
         {/* 输出区域 */}

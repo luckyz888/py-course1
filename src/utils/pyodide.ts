@@ -2,8 +2,12 @@ let pyodide: any = null;
 let stdoutInitialized = false;
 let coreLoaded = false; // numpy + pandas 已加载
 let matplotlibLoaded = false;
+let sklearnLoaded = false;
+let scipyLoaded = false;
 let loadingPromise: Promise<any> | null = null;
 let matplotlibPromise: Promise<void> | null = null;
+let sklearnPromise: Promise<void> | null = null;
+let scipyPromise: Promise<void> | null = null;
 
 // globalThis 兼容性 polyfill
 const _global: any = typeof globalThis !== 'undefined' ? globalThis
@@ -23,7 +27,7 @@ function setStatus(status: string) {
   statusCallbacks.forEach((cb) => cb(status));
 }
 
-/** 加载核心 Python 环境（Pyodide + numpy + pandas），matplotlib 按需加载 */
+/** 加载核心 Python 环境（Pyodide + numpy + pandas） */
 export async function loadPyodide() {
   if (pyodide && coreLoaded) return pyodide;
   if (loadingPromise) return loadingPromise;
@@ -32,7 +36,6 @@ export async function loadPyodide() {
     try {
       setStatus('正在下载 Python 运行环境（约8MB）...');
 
-      // 加载 Pyodide 脚本
       if (!(_global as any).loadPyodide) {
         await new Promise<void>((resolve, reject) => {
           const script = document.createElement('script');
@@ -48,17 +51,10 @@ export async function loadPyodide() {
         indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.25.1/full/'
       });
 
-      // 并行加载 numpy 和 pandas（Pyodide 自动处理依赖顺序）
       setStatus('正在加载数据分析包（numpy + pandas）...');
       await pyodide.loadPackage(['numpy', 'pandas']);
 
       coreLoaded = true;
-
-      // 如果在加载期间已经有人请求了 matplotlib，也一并加载
-      if (matplotlibPromise) {
-        await matplotlibPromise;
-      }
-
       setStatus('就绪');
       return pyodide;
     } catch (err) {
@@ -74,17 +70,14 @@ export async function loadPyodide() {
   return loadingPromise;
 }
 
-/** 按需加载 matplotlib（约8MB，仅在代码使用绘图时加载） */
+/** 按需加载 matplotlib */
 export async function loadMatplotlib() {
   if (matplotlibLoaded) return;
   if (matplotlibPromise) { await matplotlibPromise; return; }
 
   matplotlibPromise = (async () => {
     try {
-      // 确保核心环境已加载
-      if (!pyodide || !coreLoaded) {
-        await loadPyodide();
-      }
+      if (!pyodide || !coreLoaded) await loadPyodide();
       setStatus('正在加载 matplotlib 绘图库（约8MB）...');
       await pyodide.loadPackage('matplotlib');
       await pyodide.runPythonAsync(`import matplotlib; matplotlib.use('Agg')`);
@@ -100,9 +93,63 @@ export async function loadMatplotlib() {
   await matplotlibPromise;
 }
 
+/** 按需加载 scikit-learn（约15MB） */
+export async function loadSklearn() {
+  if (sklearnLoaded) return;
+  if (sklearnPromise) { await sklearnPromise; return; }
+
+  sklearnPromise = (async () => {
+    try {
+      if (!pyodide || !coreLoaded) await loadPyodide();
+      setStatus('正在加载 scikit-learn 机器学习库（约15MB，首次较慢）...');
+      await pyodide.loadPackage('scikit-learn');
+      sklearnLoaded = true;
+      setStatus('就绪');
+    } catch (err) {
+      console.error('scikit-learn 加载失败:', err);
+      sklearnPromise = null;
+      throw err;
+    }
+  })();
+
+  await sklearnPromise;
+}
+
+/** 按需加载 scipy（约10MB） */
+export async function loadScipy() {
+  if (scipyLoaded) return;
+  if (scipyPromise) { await scipyPromise; return; }
+
+  scipyPromise = (async () => {
+    try {
+      if (!pyodide || !coreLoaded) await loadPyodide();
+      setStatus('正在加载 scipy 科学计算库（约10MB，首次较慢）...');
+      await pyodide.loadPackage('scipy');
+      scipyLoaded = true;
+      setStatus('就绪');
+    } catch (err) {
+      console.error('scipy 加载失败:', err);
+      scipyPromise = null;
+      throw err;
+    }
+  })();
+
+  await scipyPromise;
+}
+
 /** 检测代码是否需要 matplotlib */
 function needsMatplotlib(code: string): boolean {
   return /matplotlib|plt\.|pyplot|\.plot\(|\.bar\(|\.scatter\(|\.hist\(|\.pie\(|\.figure\(|\.subplot/.test(code);
+}
+
+/** 检测代码是否需要 scikit-learn */
+function needsSklearn(code: string): boolean {
+  return /sklearn|StandardScaler|MinMaxScaler|LabelEncoder|OneHotEncoder|KMeans|RandomForest|PCA|PolynomialFeatures|VarianceThreshold|FeatureHasher|OrdinalEncoder|silhouette_score|train_test_split|LogisticRegression|SVC|DecisionTree/.test(code);
+}
+
+/** 检测代码是否需要 scipy */
+function needsScipy(code: string): boolean {
+  return /scipy|chi2_contingency|ttest_ind|mannwhitneyu|stats\.|fisher_exact|norm\.|zscore/.test(code);
 }
 
 /** 在后台预加载 Pyodide，不阻塞页面渲染 */
@@ -142,9 +189,19 @@ export async function runPython(code: string): Promise<{ output: string; error: 
     await ensureStdoutCapture();
     await pyodide.runPythonAsync(`_capture.outputs.clear()`);
 
-    // 如果代码需要 matplotlib，自动按需加载
+    // 按需加载 matplotlib
     if (needsMatplotlib(code) && !matplotlibLoaded) {
       await loadMatplotlib();
+    }
+
+    // 按需加载 scikit-learn
+    if (needsSklearn(code) && !sklearnLoaded) {
+      await loadSklearn();
+    }
+
+    // 按需加载 scipy
+    if (needsScipy(code) && !scipyLoaded) {
+      await loadScipy();
     }
 
     // 运行用户代码

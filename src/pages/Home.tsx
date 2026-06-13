@@ -1,6 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, Trophy, PlayCircle, Flame, CheckCircle2, ArrowRight, Code2, Zap, Layers, Lightbulb, Code, Users, GraduationCap, Target, Calendar, Clock, Rocket, Star, Flag } from 'lucide-react';
+import { BookOpen, Trophy, PlayCircle, Flame, CheckCircle2, ArrowRight, Code2, Zap, Layers, Lightbulb, Code, Users, GraduationCap, Target, Calendar, Clock, Rocket, Star, Flag, Play, Loader2, Terminal, X } from 'lucide-react';
+import React from 'react';
+import { runPython, isPyodideLoaded, loadPyodide, onStatusChange } from '../utils/pyodide';
+
+// 懒加载 Monaco Editor
+const Editor = React.lazy(() => import('@monaco-editor/react'));
+
+function EditorFallback() {
+  return (
+    <div className="flex items-center justify-center h-full bg-gray-900 text-gray-400 text-sm">
+      <Loader2 size={16} className="animate-spin mr-2" />
+      加载编辑器...
+    </div>
+  );
+}
 
 const stats = [
   { value: 6, label: '课程模块', suffix: '', gradient: 'from-indigo-50 to-blue-50', textColor: 'text-indigo-600', subColor: 'text-indigo-400', icon: BookOpen },
@@ -551,6 +565,264 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* 在线代码编辑器 */}
+      <HomeCodeEditor />
     </div>
+  );
+}
+
+// ==================== 首页代码编辑器 ====================
+
+const DEFAULT_CODE = `# 欢迎使用在线 Python 编辑器！
+# 在这里可以直接运行 Python 代码，支持 numpy、pandas、matplotlib
+
+import pandas as pd
+import numpy as np
+
+# 创建一个简单的 DataFrame
+data = {
+    '产品': ['笔记本', '手机', '平板', '耳机', '手表'],
+    '销量': [1200, 3500, 1800, 4200, 2100],
+    '单价': [5999, 3999, 2999, 999, 1599],
+    '评分': [4.7, 4.5, 4.3, 4.8, 4.6]
+}
+
+df = pd.DataFrame(data)
+df['销售额'] = df['销量'] * df['单价']
+
+print("=== 产品销售数据 ===")
+print(df.to_string(index=False))
+print()
+print(f"总销售额: ¥{df['销售额'].sum():,.0f}")
+print(f"平均评分: {df['评分'].mean():.1f}")
+print(f"最畅销产品: {df.loc[df['销量'].idxmax(), '产品']}")
+`;
+
+function HomeCodeEditor() {
+  const [code, setCode] = useState(DEFAULT_CODE);
+  const [output, setOutput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [images, setImages] = useState<string[]>([]);
+  const [isRunning, setIsRunning] = useState(false);
+  const [pyodideState, setPyodideState] = useState<'idle' | 'loading' | 'ready'>(
+    isPyodideLoaded() ? 'ready' : 'idle'
+  );
+  const [loadingStatus, setLoadingStatus] = useState('');
+  const [runCount, setRunCount] = useState(0);
+  const [showOutput, setShowOutput] = useState(false);
+
+  useEffect(() => {
+    const cleanup = onStatusChange((status) => {
+      setLoadingStatus(status);
+      if (status === '就绪') setPyodideState('ready');
+      else if (status === '加载失败') setPyodideState('idle');
+      else setPyodideState('loading');
+    });
+    return cleanup;
+  }, []);
+
+  const pythonCompletions = useMemo(() => [
+    { label: 'import pandas as pd', kind: 4, insertText: 'import pandas as pd', documentation: '导入Pandas库' },
+    { label: 'pd.read_csv', kind: 3, insertText: 'pd.read_csv(${1:filepath})', documentation: '读取CSV文件' },
+    { label: 'pd.DataFrame', kind: 6, insertText: 'pd.DataFrame(${1:data})', documentation: '创建DataFrame' },
+    { label: 'df.head', kind: 2, insertText: 'df.head(${1:5})', documentation: '查看前N行' },
+    { label: 'df.info', kind: 2, insertText: 'df.info()', documentation: '查看数据信息' },
+    { label: 'df.describe', kind: 2, insertText: 'df.describe()', documentation: '描述性统计' },
+    { label: 'df.groupby', kind: 2, insertText: "df.groupby('${1:column}').${2:agg}()", documentation: '分组聚合' },
+    { label: 'import numpy as np', kind: 4, insertText: 'import numpy as np', documentation: '导入NumPy库' },
+    { label: 'import matplotlib.pyplot as plt', kind: 4, insertText: "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt", documentation: '导入Matplotlib' },
+    { label: 'plt.plot', kind: 3, insertText: "plt.plot(${1:x}, ${2:y})", documentation: '折线图' },
+    { label: 'plt.bar', kind: 3, insertText: "plt.bar(${1:x}, ${2:height})", documentation: '柱状图' },
+  ], []);
+
+  const handleEditorMount = useCallback((_editor: any, monaco: any) => {
+    monaco.languages.registerCompletionItemProvider('python', {
+      provideCompletionItems: () => {
+        const suggestions = pythonCompletions.map((s) => ({
+          ...s,
+          kind: s.kind as any,
+          insertTextRules: s.insertText.includes('${') ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+        }));
+        return { suggestions };
+      },
+    });
+  }, [pythonCompletions]);
+
+  const handleRun = useCallback(async () => {
+    if (isRunning) return;
+    setIsRunning(true);
+    setOutput('');
+    setError(null);
+    setImages([]);
+    setRunCount((c) => c + 1);
+    setShowOutput(true);
+
+    try {
+      if (!isPyodideLoaded()) {
+        setPyodideState('loading');
+        await loadPyodide();
+      }
+      const result = await runPython(code);
+      setOutput(result.output);
+      setError(result.error);
+      setImages(result.images);
+    } catch (err: any) {
+      setError(err.message || '运行出错');
+    } finally {
+      setIsRunning(false);
+    }
+  }, [isRunning, code]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleRun();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleRun]);
+
+  const hasOutput = output || error || images.length > 0;
+
+  return (
+    <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden animate-fade-in">
+      <div className="bg-gradient-to-r from-emerald-500 to-teal-500 px-6 py-3">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <Terminal className="w-5 h-5" />
+          在线 Python 编辑器
+        </h2>
+      </div>
+
+      <div className="flex flex-col">
+        {/* 工具栏 */}
+        <div className="flex items-center justify-between px-4 py-2 bg-gray-800 text-white shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Code2 size={14} className="text-amber-400" />
+              <span className="text-sm font-medium">Python 控制台</span>
+            </div>
+            {pyodideState === 'loading' && (
+              <span className="text-xs text-amber-300 flex items-center gap-1">
+                <Loader2 size={11} className="animate-spin" />
+                {loadingStatus || '加载中...'}
+              </span>
+            )}
+            {pyodideState === 'ready' && (
+              <span className="flex items-center gap-1 text-xs text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                就绪
+              </span>
+            )}
+            {pyodideState === 'idle' && (
+              <span className="text-xs text-gray-400">点击运行加载环境</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {hasOutput && showOutput && (
+              <button
+                onClick={() => { setOutput(''); setError(null); setImages([]); }}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+              >
+                <X size={12} />
+                清空
+              </button>
+            )}
+            <button
+              onClick={handleRun}
+              disabled={isRunning || pyodideState === 'loading'}
+              className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed rounded transition-colors shadow-sm"
+            >
+              {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              {isRunning ? '运行中...' : '运行代码'}
+            </button>
+          </div>
+        </div>
+
+        {/* 编辑器 */}
+        <div style={{ height: '360px' }}>
+          <React.Suspense fallback={<EditorFallback />}>
+            <Editor
+              height="100%"
+              language="python"
+              theme="vs-dark"
+              value={code}
+              onChange={(value) => setCode(value || '')}
+              onMount={handleEditorMount}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 14,
+                lineNumbers: 'on',
+                scrollBeyondLastLine: false,
+                automaticLayout: true,
+                tabSize: 4,
+                wordWrap: 'on',
+                padding: { top: 12 },
+                suggestOnTriggerCharacters: true,
+                quickSuggestions: { other: true, comments: false, strings: true },
+                scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+                cursorBlinking: 'smooth',
+                smoothScrolling: true,
+                folding: true,
+                foldingStrategy: 'indentation',
+              }}
+            />
+          </React.Suspense>
+        </div>
+
+        {/* 输出区域 */}
+        {showOutput && (
+          <div className="border-t border-gray-300">
+            <div className="px-4 py-1.5 bg-gray-100 text-xs font-semibold text-gray-500 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span>输出结果</span>
+                {runCount > 0 && (
+                  <span className="text-gray-400 font-normal">第 {runCount} 次运行</span>
+                )}
+              </div>
+              <button
+                onClick={() => setShowOutput(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={12} />
+              </button>
+            </div>
+            <div className="p-4 bg-gray-50 min-h-[60px] max-h-[250px] overflow-y-auto">
+              {!hasOutput && !isRunning && (
+                <div className="text-sm text-gray-400 flex items-center gap-2">
+                  <Play size={14} />
+                  点击「运行代码」或按 Ctrl+Enter 执行
+                </div>
+              )}
+              {isRunning && !hasOutput && (
+                <div className="text-sm text-gray-400 flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  正在执行代码...
+                </div>
+              )}
+              {output && (
+                <pre className="text-sm text-gray-800 whitespace-pre-wrap font-mono leading-relaxed">{output}</pre>
+              )}
+              {error && (
+                <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <pre className="text-sm text-red-600 whitespace-pre-wrap font-mono leading-relaxed">{error}</pre>
+                </div>
+              )}
+              {images.map((img, i) => (
+                <div key={i} className="mt-3">
+                  <img src={`data:image/png;base64,${img}`} alt={`图表 ${i + 1}`} className="max-w-full rounded border border-gray-200 shadow-sm" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 text-center">
+        <p className="text-xs text-gray-400">支持 numpy、pandas、matplotlib · 代码在浏览器本地运行 · Ctrl+Enter 快速执行</p>
+      </div>
+    </section>
   );
 }

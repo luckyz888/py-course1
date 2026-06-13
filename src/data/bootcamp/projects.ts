@@ -1760,8 +1760,14 @@ print(f'A组: {len(group_a)}人, B组: {len(group_b)}人')`,
         {
           title: '样本量计算与指标选择',
           content: '样本量直接影响检验的统计功效（Power）。样本量取决于：基线转化率p、最小可检测效应MDE、显著性水平α（通常0.05）、统计功效1-β（通常0.8）。公式：n = (Z_α/2 + Z_β)² × p(1-p) / (p1-p0)²。指标选择应与业务目标直接相关，分为主指标（决策依据）和辅助指标（参考）。指标应可测量、敏感且稳定。',
-          codeExample: `from statsmodels.stats.power import zt_ind_solve_power
-n = zt_ind_solve_power(effect_size=0.2, alpha=0.05, power=0.8)
+          codeExample: `import numpy as np
+from scipy import stats
+# 样本量计算公式：n = (Z_α/2 + Z_β)² × p(1-p) / δ²
+p = 0.05  # 基线转化率
+delta = 0.015  # 最小可检测差异
+z_alpha = stats.norm.ppf(0.975)  # 1.96
+z_beta = stats.norm.ppf(0.8)  # 0.84
+n = (z_alpha + z_beta)**2 * p * (1-p) / delta**2
 print(f'每组所需样本量: {int(np.ceil(n))}')`,
           importance: 'supplementary',
         },
@@ -2097,12 +2103,14 @@ df['7日均值_lag'] = df['销售额'].rolling(7).mean().shift(1)`,
       items: [
         {
           title: '趋势分解与季节性检测',
-          content: '时间序列可分解为趋势（Trend）、季节（Seasonal）和残差（Residual）三个分量。statsmodels的seasonal_decompose()支持加法模型（additive）和乘法模型（multiplicative）。加法模型：Y = T + S + R，适合季节波动幅度恒定；乘法模型：Y = T × S × R，适合季节波动幅度随趋势增大。分解后可分别分析趋势方向、季节模式和异常残差。',
-          codeExample: `from statsmodels.tsa.seasonal import seasonal_decompose
-result = seasonal_decompose(df['销售额'], model='additive', period=365)
-result.plot()
-plt.show()
-print(f'趋势:\\n{result.trend.head()}')`,
+          content: '时间序列可分解为趋势（Trend）、季节（Seasonal）和残差（Residual）三个分量。加法模型：Y = T + S + R，适合季节波动幅度恒定；乘法模型：Y = T × S × R，适合季节波动幅度随趋势增大。可用移动平均提取趋势，用按月均值提取季节性，残差=原始值-趋势-季节。分解后可分别分析趋势方向、季节模式和异常残差。',
+          codeExample: `# 手动趋势分解：移动平均提取趋势
+trend = df['销售额'].rolling(window=30, center=True).mean()
+detrended = df['销售额'] - trend
+seasonal = detrended.groupby(detrended.index.month).mean()
+residual = detrended - seasonal[detrended.index.month].values
+print(f'趋势:\\n{trend.head()}')
+print(f'\\n季节性（各月均值）:\\n{seasonal}')`,
           importance: 'core',
         },
         {
@@ -2385,10 +2393,10 @@ df['年龄收入交互'] = df['年龄'] * df['收入']`,
           codeExample: `# 相关性驱动的特征交叉
 corr_matrix = df.corr(numeric_only=True)
 high_corr = corr_matrix[corr_matrix.abs() > 0.5].stack().dropna()
-# 特征哈希
-from sklearn.feature_extraction import FeatureHasher
-hasher = FeatureHasher(n_features=10, input_type='string')
-hashed = hasher.transform(df['城市'].apply(lambda x: [x]))`,
+# 特征哈希（简单实现）
+import hashlib
+df['城市_哈希'] = df['城市'].apply(lambda x: int(hashlib.md5(x.encode()).hexdigest()[:8], 16) % 100)
+print(df['城市_哈希'].head())`,
           importance: 'supplementary',
         },
       ],
